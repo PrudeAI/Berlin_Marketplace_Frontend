@@ -4,6 +4,7 @@ import { Button } from '../components/ui/Button';
 import { SustainabilityScore } from '../components/ui/SustainabilityScore';
 import { FavoriteButton } from '../components/ui/FavoriteButton';
 import { isUserAuthenticated, getUserToken } from '../utils/userAuth';
+import { SimilarProducts } from '../components/recommendations/SimilarProducts';
 import { 
   ChevronRight, 
   ChevronLeft,
@@ -16,7 +17,12 @@ import {
   Share2,
   Info,
   Star,
-  MessageSquare
+  MessageSquare,
+  CheckCircle2,
+  ShieldCheck,
+  Tag,
+  Building2,
+  Sparkles
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -41,6 +47,7 @@ interface ProductData {
       height?: number;
       width?: number;
       depth?: number;
+      diameter?: number;  // For cylindrical containers
       unit?: string;
     };
     weight?: {
@@ -398,6 +405,27 @@ export const ProductDetailPage = () => {
                 {product.description}
               </p>
 
+              {/* Target Industries badges */}
+              {product?.targetIndustries && product.targetIndustries.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {product.targetIndustries.map((ind: string, i: number) => (
+                    <span key={i} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs px-2 py-1 rounded-full border border-indigo-200">
+                      <Building2 className="h-3 w-3" />{ind.replace(/-/g, ' ')}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Compliance badges */}
+              {product?.compliance && Object.values(product.compliance).some(Boolean) && (
+                <div className="flex flex-wrap gap-1.5 mb-6">
+                  {product.compliance?.fdaApproved && <span className="inline-flex items-center gap-1 bg-green-50 text-green-700 text-xs px-2 py-1 rounded-full border border-green-200"><ShieldCheck className="h-3 w-3" />FDA Approved</span>}
+                  {product.compliance?.euCompliant && <span className="inline-flex items-center gap-1 bg-green-50 text-green-700 text-xs px-2 py-1 rounded-full border border-green-200"><ShieldCheck className="h-3 w-3" />EU Compliant</span>}
+                  {product.compliance?.reach && <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-xs px-2 py-1 rounded-full border border-blue-200"><ShieldCheck className="h-3 w-3" />REACH</span>}
+                  {product.compliance?.rohs && <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-xs px-2 py-1 rounded-full border border-blue-200"><ShieldCheck className="h-3 w-3" />RoHS</span>}
+                </div>
+              )}
+
               <div className="mb-8">
                 <h3 className="text-lg font-semibold mb-3">Key Features</h3>
                 <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2">
@@ -519,7 +547,46 @@ export const ProductDetailPage = () => {
                   <p className="text-berlin-gray-700 mb-6">
                     {product.description}
                   </p>
-                  
+
+                  {/* AI-generated product highlights callout */}
+                  {product?.productHighlights && (
+                    <div className="bg-berlin-red-50 border border-berlin-red-200 rounded-lg p-4 mb-6">
+                      <div className="flex items-start gap-2">
+                        <Sparkles className="h-5 w-5 text-berlin-red-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-semibold text-berlin-red-700 mb-1">Why This Product</p>
+                          <p className="text-sm text-berlin-gray-700">{product.productHighlights}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Key advantages */}
+                  {product?.keyAdvantages && product.keyAdvantages.length > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-lg font-semibold mb-3">Key Advantages</h3>
+                      <ul className="space-y-2">
+                        {product.keyAdvantages.map((adv: string, i: number) => (
+                          <li key={i} className="flex items-start gap-2">
+                            <CheckCircle2 className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+                            <span className="text-berlin-gray-700">{adv}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Discovery tags */}
+                  {product?.tags && product.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-6">
+                      {product.tags.map((tag: string, i: number) => (
+                        <span key={i} className="inline-flex items-center gap-1 bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">
+                          <Tag className="h-3 w-3" />#{tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
                   <h3 className="text-lg font-semibold mb-3">About the Supplier</h3>
                   <div className="bg-berlin-gray-50 p-4 rounded-lg mb-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -574,10 +641,23 @@ export const ProductDetailPage = () => {
                           <tr>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-berlin-gray-900 bg-berlin-gray-50 w-1/3">Dimensions</td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-berlin-gray-700">
-                              {product.specifications.dimensions.height && product.specifications.dimensions.width && product.specifications.dimensions.depth
-                                ? `${product.specifications.dimensions.height}x${product.specifications.dimensions.width}x${product.specifications.dimensions.depth} ${product.specifications.dimensions.unit || 'mm'}`
-                                : 'Contact supplier for dimensions'
-                              }
+                              {(() => {
+                                const d = product.specifications.dimensions;
+                                const unit = d?.unit || 'mm';
+                                // Height x Width x Depth (rectangular)
+                                if (d?.height && d?.width && d?.depth) {
+                                  return `${d.height}x${d.width}x${d.depth} ${unit}`;
+                                }
+                                // Height x Diameter (cylindrical - bottles, jars, tubes)
+                                if (d?.height && d?.diameter) {
+                                  return `H: ${d.height} ${unit} × Ø: ${d.diameter} ${unit}`;
+                                }
+                                // Only height
+                                if (d?.height) {
+                                  return `Height: ${d.height} ${unit}`;
+                                }
+                                return 'Contact supplier for dimensions';
+                              })()}
                             </td>
                           </tr>
                         )}
@@ -798,6 +878,13 @@ export const ProductDetailPage = () => {
           </div>
         </div>
       </div>
+
+      {/* Similar Products — AI-matched recommendations */}
+      {product && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
+          <SimilarProducts productId={product._id} topN={6} />
+        </div>
+      )}
 
       {/* Success Message */}
       {quoteSuccess && (

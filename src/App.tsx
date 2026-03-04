@@ -21,6 +21,7 @@ import EditProductPage from './pages/EditProductPage';
 import SustainabilityPage from './pages/SustainabilityPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import AboutPage from './pages/AboutPage';
+import ProductFinderPage from './pages/ProductFinderPage';
 
 
 function App() {
@@ -39,6 +40,7 @@ function App() {
             <Route path="/signup" element={<SignupPage />} />
             <Route path="/dashboard" element={<UserDashboard />} />
             <Route path="/sustainability" element={<SustainabilityPage />} />
+            <Route path="/find-products" element={<ProductFinderPage />} />
             <Route path="/become-supplier" element={<BecomeSupplierPage />} />
             <Route path="/about" element={<AboutPage/>} />
             {/* Supplier Authentication */}

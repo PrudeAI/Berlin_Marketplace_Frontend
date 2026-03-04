@@ -1,373 +1,223 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, FileText, File, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
-import ProductSummary from '../components/products/ProductSummary';
+import { CheckCircle } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import FileUploadZone from '../components/ai-upload/FileUploadZone';
+import ProcessingProgress, { type FileProcessingStatus } from '../components/ai-upload/ProcessingProgress';
+import ProductReviewGrid from '../components/ai-upload/ProductReviewGrid';
 
-interface ExtractedProduct {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  broaderCategory: string;
-  subcategory?: string;
-  specifications: {
-    material?: string;
-    capacity?: { value: number; unit: string };
-    dimensions?: { height: number; width: number; depth: number; unit: string };
-    color?: string;
-    minimumOrderQuantity: number;
-  };
-  pricing: {
-    basePrice: number;
-    currency: string;
-  };
-  images: string[];
-  features: string[];
-  certifications: string[];
-  sustainability?: {
-    recycledContent?: number;
-    biodegradable?: boolean;
-    compostable?: boolean;
-    refillable?: boolean;
-  };
-  status: 'extracted' | 'reviewed' | 'approved' | 'rejected';
-  similarProducts: {
-    id: string;
-    name: string;
-    similarity: number;
-  }[];
-  missingFields: string[];
-}
+import type { AIExtractedProduct } from '../utils/aiTypes';
+import { extractProductsFromFile, submitApprovedProducts } from '../services/aiExtractionService';
 
-interface FileUploadStatus {
-  name: string;
-  status: 'uploading' | 'processing' | 'completed' | 'error';
-  progress: number;
-  error?: string;
-}
+// ─── How many extracted products we remember for the "live preview" scroll ───
+const MAX_LIVE_PREVIEW = 40;
 
 const AIProductEntryPage: React.FC = () => {
-  const [uploadedFiles, setUploadedFiles] = useState<FileUploadStatus[]>([]);
-  const [extractedProducts, setExtractedProducts] = useState<ExtractedProduct[]>([]);
-  const [currentStep, setCurrentStep] = useState<'upload' | 'processing' | 'review' | 'summary'>('upload');
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
+  const [step, setStep] = useState<'upload' | 'processing' | 'review' | 'summary'>('upload');
+  const [fileStatuses, setFileStatuses] = useState<FileProcessingStatus[]>([]);
+  const [products, setProducts] = useState<AIExtractedProduct[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittedCount, setSubmittedCount] = useState(0);
+  const [batchSize, setBatchSize] = useState(3);
 
-    const newFiles: FileUploadStatus[] = Array.from(files).map(file => ({
-      name: file.name,
-      status: 'uploading',
-      progress: 0
+  // ── Internal helpers ──────────────────────────────────────────────────────
+
+  const updateFileStatus = useCallback(
+    (fileId: string, patch: Partial<FileProcessingStatus>) =>
+      setFileStatuses(prev => prev.map(f => f.id === fileId ? { ...f, ...patch } : f)),
+    []
+  );
+
+  const checkAllDone = useCallback(
+    (statuses: FileProcessingStatus[]) => {
+      const allSettled = statuses.every(f => f.status === 'done' || f.status === 'error');
+      if (allSettled) setStep('review');
+    },
+    []
+  );
+
+  // ── File selection handler (from FileUploadZone) ──────────────────────────
+
+  const handleFilesSelected = useCallback(async (files: File[]) => {
+    // Build initial status objects
+    const newStatuses: FileProcessingStatus[] = files.map(f => ({
+      id: crypto.randomUUID(),
+      fileName: f.name,
+      status: 'uploading' as const,
+      productsFound: 0,
     }));
 
-    setUploadedFiles(prev => [...prev, ...newFiles]);
-    setCurrentStep('processing');
-
-    // Process each file
-    Array.from(files).forEach((file, index) => {
-      processFile(file, index);
+    setFileStatuses(prev => {
+      const next = [...prev, ...newStatuses];
+      return next;
     });
-  };
+    setStep('processing');
 
-  const processFile = async (file: File, index: number) => {
-    try {
-      // Update status to processing
-      setUploadedFiles(prev => prev.map((f, i) => 
-        i === prev.length - 1 + index ? { ...f, status: 'processing', progress: 25 } : f
-      ));
+    // Start SSE extraction for every file concurrently
+    await Promise.allSettled(
+      files.map(async (file, i) => {
+        const fileId = newStatuses[i].id;
 
-      const formData = new FormData();
-      formData.append('file', file);
+        try {
+          updateFileStatus(fileId, { status: 'uploading' });
 
-      const response = await fetch(`${API_URL}/api/ai/extract-products`, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('supplier_token')}`
+          await extractProductsFromFile(file, {
+            onStart: () => {
+              updateFileStatus(fileId, { status: 'extracting' });
+            },
+            onProduct: (product) => {
+              // Trim live preview list to avoid giant DOM lists during extraction
+              setProducts(prev => {
+                const next = [...prev, product];
+                return next.length > MAX_LIVE_PREVIEW ? next.slice(-MAX_LIVE_PREVIEW) : next;
+              });
+              setFileStatuses(prev =>
+                prev.map(f =>
+                  f.id === fileId ? { ...f, productsFound: f.productsFound + 1 } : f
+                )
+              );
+            },
+            onDone: () => {
+              setFileStatuses(prev => {
+                const next = prev.map(f =>
+                  f.id === fileId ? { ...f, status: 'done' as const } : f
+                );
+                checkAllDone(next);
+                return next;
+              });
+            },
+            onError: (err) => {
+              setFileStatuses(prev => {
+                const next = prev.map(f =>
+                  f.id === fileId ? { ...f, status: 'error' as const, errorMessage: err.message } : f
+                );
+                checkAllDone(next);
+                return next;
+              });
+            },
+          }, batchSize);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Unknown error';
+          setFileStatuses(prev => {
+            const next = prev.map(f =>
+              f.id === fileId ? { ...f, status: 'error' as const, errorMessage: msg } : f
+            );
+            checkAllDone(next);
+            return next;
+          });
         }
-      });
+      })
+    );
+  }, [updateFileStatus, checkAllDone, batchSize]);
 
-      if (!response.ok) {
-        throw new Error(`Failed to process file: ${response.statusText}`);
-      }
+  // ── Submission ────────────────────────────────────────────────────────────
 
-      const data = await response.json();
-      
-      // Update file status
-      setUploadedFiles(prev => prev.map((f, i) => 
-        i === prev.length - 1 + index ? { ...f, status: 'completed', progress: 100 } : f
-      ));
+  const handleSubmit = useCallback(async () => {
+    const approved = products.filter(p => p.status === 'approved');
+    if (approved.length === 0) return;
 
-      // Add extracted products
-      setExtractedProducts(prev => [...prev, ...data.products]);
-
-      // Check if all files are processed by checking the updated state
-      setTimeout(() => {
-        setUploadedFiles(currentFiles => {
-          const allFilesProcessed = currentFiles.every(f => f.status === 'completed' || f.status === 'error');
-          if (allFilesProcessed) {
-            setCurrentStep('review');
-          }
-          return currentFiles;
-        });
-      }, 100);
-
-    } catch (error) {
-      console.error('Error processing file:', error);
-      setUploadedFiles(prev => prev.map((f, i) => 
-        i === prev.length - 1 + index ? { 
-          ...f, 
-          status: 'error', 
-          progress: 0,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        } : f
-      ));
-    }
-  };
-
-  const handleProductEdit = (productId: string, updatedProduct: Partial<ExtractedProduct>) => {
-    setExtractedProducts(prev => prev.map(product => 
-      product.id === productId ? { ...product, ...updatedProduct } : product
-    ));
-  };
-
-  const handleProductApproval = (productId: string, approved: boolean) => {
-    setExtractedProducts(prev => prev.map(product => 
-      product.id === productId ? { 
-        ...product, 
-        status: approved ? 'approved' : 'rejected' 
-      } : product
-    ));
-  };
-
-  const handleFinalSubmission = async () => {
-    const approvedProducts = extractedProducts.filter(p => p.status === 'approved');
-    
-    if (approvedProducts.length === 0) {
-      alert('Please approve at least one product before submitting.');
-      return;
-    }
-    
+    setIsSubmitting(true);
     try {
-      const response = await fetch(`${API_URL}/api/ai/submit-products`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('supplier_token')}`
-        },
-        body: JSON.stringify({ products: approvedProducts })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to submit products');
-      }
-
-      const result = await response.json();
-      console.log('Products submitted successfully:', result);
-      
-      setCurrentStep('summary');
-    } catch (error) {
-      console.error('Error submitting products:', error);
-      alert('Failed to submit products. Please try again.');
+      const result = await submitApprovedProducts(approved);
+      setSubmittedCount(result.submitted);
+      setStep('summary');
+    } catch (err) {
+      console.error('Submission error:', err);
+      alert(err instanceof Error ? err.message : 'Failed to submit products. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
-  };
+  }, [products]);
 
-  const renderUploadStep = () => (
-    <div className="max-w-4xl mx-auto p-6">
-      <h1 className="text-3xl font-bold text-center mb-8">AI-Powered Product Entry</h1>
-      
-      <div className="bg-white rounded-lg shadow-lg p-8">
-        <div className="text-center mb-6">
-          <Upload className="w-16 h-16 text-berlin-red-600 mx-auto mb-4" />
-          <h2 className="text-2xl font-semibold mb-2">Upload Your Product Files</h2>
-          <p className="text-gray-600 mb-4">
-            Upload Excel, PDF, or PowerPoint files containing product information. 
-            Our AI will extract and structure the data automatically.
+  // ── Reset to upload ───────────────────────────────────────────────────────
+
+  const handleReset = useCallback(() => {
+    setStep('upload');
+    setFileStatuses([]);
+    setProducts([]);
+    setSubmittedCount(0);
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Render
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (step === 'upload') {
+    return (
+      <div className="min-h-screen bg-gray-50 pt-24 pb-10 px-4">
+        <div className="max-w-3xl mx-auto text-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">AI-Powered Product Entry</h1>
+          <p className="text-gray-500 mt-2">
+            Upload your product catalogue — Gemini AI will extract every product and present it for review.
           </p>
         </div>
-
-        <div 
-          className="border-2 border-dashed border-gray-300 rounded-xl p-12 text-center hover:border-berlin-red-400 transition-colors cursor-pointer"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".xlsx,.xls,.pdf,.pptx,.ppt"
-            onChange={handleFileUpload}
-            className="hidden"
-          />
-          <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-lg font-medium mb-2">Drop files here or click to browse</p>
-          <p className="text-sm text-gray-500">
-            Supported formats: Excel (.xlsx, .xls), PDF (.pdf), PowerPoint (.pptx, .ppt)
-          </p>
-        </div>
-
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="text-center">
-            <div className="bg-blue-100 rounded-lg p-4 mb-3">
-              <File className="w-8 h-8 text-blue-600 mx-auto" />
-            </div>
-            <h3 className="font-semibold mb-2">File Processing</h3>
-            <p className="text-sm text-gray-600">AI reads and extracts product information from your files</p>
-          </div>
-          <div className="text-center">
-            <div className="bg-yellow-100 rounded-lg p-4 mb-3">
-              <CheckCircle className="w-8 h-8 text-yellow-600 mx-auto" />
-            </div>
-            <h3 className="font-semibold mb-2">Data Validation</h3>
-            <p className="text-sm text-gray-600">Review and edit extracted product data before submission</p>
-          </div>
-          <div className="text-center">
-            <div className="bg-green-100 rounded-lg p-4 mb-3">
-              <AlertCircle className="w-8 h-8 text-green-600 mx-auto" />
-            </div>
-            <h3 className="font-semibold mb-2">Quality Check</h3>
-            <p className="text-sm text-gray-600">AI checks for similar products and missing information</p>
-          </div>
-        </div>
+        <FileUploadZone
+          onFilesSelected={handleFilesSelected}
+          batchSize={batchSize}
+          onBatchSizeChange={setBatchSize}
+        />
       </div>
-    </div>
-  );
+    );
+  }
 
-  const renderProcessingStep = () => (
-    <div className="max-w-4xl mx-auto p-6">
-      <h1 className="text-3xl font-bold text-center mb-8">Processing Your Files</h1>
-      
-      <div className="bg-white rounded-lg shadow-lg p-8">
-        <div className="text-center mb-8">
-          <Loader2 className="w-16 h-16 text-berlin-red-600 mx-auto mb-4 animate-spin" />
-          <h2 className="text-2xl font-semibold mb-2">AI is extracting product information...</h2>
-          <p className="text-gray-600">This may take a few moments depending on file size and complexity</p>
-        </div>
-
-        <div className="space-y-4">
-          {uploadedFiles.map((file, index) => (
-            <div key={index} className="border rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-medium">{file.name}</span>
-                <span className={`px-2 py-1 rounded text-sm ${
-                  file.status === 'completed' ? 'bg-green-100 text-green-800' :
-                  file.status === 'error' ? 'bg-red-100 text-red-800' :
-                  'bg-yellow-100 text-yellow-800'
-                }`}>
-                  {file.status === 'uploading' ? 'Uploading...' :
-                   file.status === 'processing' ? 'Processing...' :
-                   file.status === 'completed' ? 'Completed' :
-                   'Error'}
-                </span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
-                  className={`h-2 rounded-full transition-all duration-300 ${
-                    file.status === 'error' ? 'bg-red-500' : 'bg-berlin-red-600'
-                  }`}
-                  style={{ width: `${file.progress}%` }}
-                />
-              </div>
-              {file.error && (
-                <p className="text-red-600 text-sm mt-2">{file.error}</p>
-              )}
-            </div>
-          ))}
-        </div>
+  if (step === 'processing') {
+    return (
+      <div className="min-h-screen bg-gray-50 pt-24 pb-10 px-4">
+        <ProcessingProgress
+          files={fileStatuses}
+          liveProducts={products}
+          onUploadMore={() => setStep('upload')}
+        />
       </div>
-    </div>
-  );
+    );
+  }
 
-  const renderReviewStep = () => (
-    <div className="max-w-6xl mx-auto p-6">
-      <h1 className="text-3xl font-bold text-center mb-8">Review Extracted Products</h1>
-      
-      <div className="bg-white rounded-lg shadow-lg p-8">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-semibold">
-            {extractedProducts.length} Product(s) Extracted
-          </h2>
-          <div className="flex space-x-4">
-            <button
-              onClick={() => setCurrentStep('upload')}
-              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              Upload More Files
-            </button>
-            <button
-              onClick={handleFinalSubmission}
-              disabled={extractedProducts.filter(p => p.status === 'approved').length === 0}
-              className="px-6 py-2 bg-berlin-red-600 text-white rounded-lg hover:bg-berlin-red-700 disabled:opacity-50"
-            >
-              Create Products ({extractedProducts.filter(p => p.status === 'approved').length})
-            </button>
-          </div>
-        </div>
-
-        {extractedProducts.map((product) => (
-          <ProductSummary
-            key={product.id}
-            product={product}
-            onUpdate={handleProductEdit}
-            onApprove={(productId) => handleProductApproval(productId, true)}
-            onReject={(productId) => handleProductApproval(productId, false)}
-          />
-        ))}
+  if (step === 'review') {
+    return (
+      <div className="min-h-screen bg-gray-50 pt-24 pb-10 px-4">
+        <ProductReviewGrid
+          products={products}
+          onUpdate={setProducts}
+          onUploadMore={() => setStep('upload')}
+          onSubmit={handleSubmit}
+          isSubmitting={isSubmitting}
+        />
       </div>
-    </div>
-  );
+    );
+  }
 
-  const renderSummaryStep = () => (
-    <div className="max-w-4xl mx-auto p-6">
-      <h1 className="text-3xl font-bold text-center mb-8">Products Created Successfully!</h1>
-      
-      <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-        <CheckCircle className="w-16 h-16 text-green-600 mx-auto mb-4" />
-        <h2 className="text-2xl font-semibold mb-4">
-          {extractedProducts.filter(p => p.status === 'approved').length} products have been created
+  // ── Summary ───────────────────────────────────────────────────────────────
+  return (
+    <div className="min-h-screen bg-gray-50 pt-24 pb-10 px-4">
+      <div className="max-w-lg mx-auto bg-white rounded-2xl border border-gray-200 shadow-sm p-10 text-center">
+        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+          <CheckCircle className="w-9 h-9 text-green-600" />
+        </div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">
+          {submittedCount} product{submittedCount !== 1 ? 's' : ''} submitted!
         </h2>
-        <p className="text-gray-600 mb-8">
-          Your products are now pending approval and will be visible to buyers once approved.
+        <p className="text-gray-500 mb-8">
+          Your products are now pending admin approval and will be visible to buyers once approved.
         </p>
-        
-        <div className="flex justify-center space-x-4">
+        <div className="flex flex-col sm:flex-row gap-3 justify-center">
           <button
             onClick={() => navigate('/supplier/products')}
-            className="px-6 py-3 bg-berlin-red-600 text-white rounded-lg hover:bg-berlin-red-700"
+            className="px-6 py-2.5 bg-berlin-red-600 text-white rounded-lg hover:bg-berlin-red-700 text-sm font-medium"
           >
-            View My Products
+            View my products
           </button>
           <button
-            onClick={() => {
-              setCurrentStep('upload');
-              setUploadedFiles([]);
-              setExtractedProducts([]);
-            }}
-            className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50"
+            onClick={handleReset}
+            className="px-6 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium"
           >
-            Add More Products
+            Upload more files
           </button>
         </div>
       </div>
     </div>
   );
-
-  switch (currentStep) {
-    case 'upload':
-      return renderUploadStep();
-    case 'processing':
-      return renderProcessingStep();
-    case 'review':
-      return renderReviewStep();
-    case 'summary':
-      return renderSummaryStep();
-    default:
-      return renderUploadStep();
-  }
 };
 
 export default AIProductEntryPage;

@@ -16,6 +16,12 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/rec-api': {
+        target: 'http://localhost:6000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/rec-api/, '/api'),
+        secure: false,
+      },
     },
   },
 });

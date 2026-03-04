@@ -24,6 +24,12 @@ interface SupplierData {
   status: string;
   createdAt: string;
   updatedAt: string;
+  productHighlights?: string;
+  keyAdvantages?: string[];
+  targetIndustries?: string[];
+  packagingFunction?: string;
+  tags?: string[];
+  compliance?: { fdaApproved?: boolean; euCompliant?: boolean; reach?: boolean; rohs?: boolean; };
 }
 
 interface ProductData {
@@ -49,6 +55,12 @@ interface ProductData {
     localSourcing: number;
     certifications: string[];
   };
+  productHighlights?: string;
+  keyAdvantages?: string[];
+  targetIndustries?: string[];
+  packagingFunction?: string;
+  tags?: string[];
+  compliance?: { fdaApproved?: boolean; euCompliant?: boolean; reach?: boolean; rohs?: boolean; };
 }
 
 function getFiltersForCategory(category: string) {
@@ -99,6 +111,35 @@ function productMatchesFilters(product: any, filters: Record<string, any>) {
       if (!selectedNames.includes(String(product.location).toLowerCase())) {
         console.log('Location filter failed:', { selectedNames, productLocation: product.location });
         return false;
+      }
+      continue;
+    }
+
+    // Special case: target industries (array filter vs product.targetIndustries array)
+    if (key === 'targetindustry' || key === 'targetindustries') {
+      if (Array.isArray(value) && value.length > 0) {
+        const productIndustries: string[] = (product?.targetIndustries ?? []).map((i: string) => i.toLowerCase());
+        const matches = value.some(v => productIndustries.includes(v.toLowerCase()));
+        if (!matches) return false;
+      }
+      continue;
+    }
+
+    // Special case: packagingFunction
+    if (key === 'packagingfunction') {
+      if (value && value !== '') {
+        const pf = (product?.packagingFunction ?? '').toLowerCase();
+        if (pf !== value.toLowerCase()) return false;
+      }
+      continue;
+    }
+
+    // Special case: compliance flags
+    if (['fdaapproved','eucompliant','reach','rohs'].includes(key)) {
+      if (value === true || value === 'true') {
+        const complianceMap: Record<string, string> = { fdaapproved: 'fdaApproved', eucompliant: 'euCompliant', reach: 'reach', rohs: 'rohs' };
+        const compKey = complianceMap[key];
+        if (!product?.compliance?.[compKey]) return false;
       }
       continue;
     }
@@ -450,7 +491,13 @@ const ProductFilterPage = () => {
         sustainableMaterials: 0,
         localSourcing: 0,
         certifications: []
-      }
+      },
+      productHighlights: supplier.productHighlights,
+      keyAdvantages: supplier.keyAdvantages,
+      targetIndustries: supplier.targetIndustries,
+      packagingFunction: supplier.packagingFunction,
+      tags: supplier.tags,
+      compliance: supplier.compliance,
     };
   };
 
@@ -768,6 +815,70 @@ const ProductFilterPage = () => {
             </div>
           ))}
         </div>
+
+        {/* ── Target Industries filter ── */}
+        <hr className="my-3 border-berlin-gray-100" />
+        <div className="mb-1">
+          <details className="group" open={openFilterIndexes.includes(9901)}>
+            <summary className="flex items-center justify-between cursor-pointer select-none py-1 px-1 rounded hover:bg-berlin-red-50 transition text-xs font-semibold text-berlin-gray-800" onClick={e => { e.preventDefault(); setOpenFilterIndexes(prev => prev.includes(9901) ? prev.filter(i => i !== 9901) : [...prev, 9901]); }}>
+              <span className="flex items-center gap-1">Target Industries{Array.isArray(filterState.targetindustry) && filterState.targetindustry.length > 0 && <span className="ml-1 text-berlin-red-600 text-xs font-semibold">({filterState.targetindustry.length})</span>}</span>
+              <svg className="w-3 h-3 ml-2 text-berlin-red-500 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
+            </summary>
+            {openFilterIndexes.includes(9901) && (
+              <div className="mt-1 space-y-1">
+                {['food-beverage','pharmaceuticals','cosmetics-beauty','personal-care','household','industrial','chemicals','nutraceuticals','pet-care','cannabis'].map((ind: string) => (
+                  <button key={ind} type="button" className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium w-full text-left transition hover:bg-berlin-red-50 ${Array.isArray(filterState.targetindustry) && filterState.targetindustry.includes(ind) ? 'bg-berlin-red-50 border border-berlin-red-300 text-berlin-red-700' : 'bg-berlin-gray-50 text-berlin-gray-700'}`}
+                    onClick={() => { const prev = Array.isArray(filterState.targetindustry) ? filterState.targetindustry : []; handleFilterChange('targetindustry', prev.includes(ind) ? prev.filter((v: string) => v !== ind) : [...prev, ind]); }}>
+                    <span className="capitalize">{ind.replace(/-/g, ' ')}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </details>
+        </div>
+
+        {/* ── Packaging Function filter ── */}
+        <hr className="my-3 border-berlin-gray-100" />
+        <div className="mb-1">
+          <details className="group" open={openFilterIndexes.includes(9902)}>
+            <summary className="flex items-center justify-between cursor-pointer select-none py-1 px-1 rounded hover:bg-berlin-red-50 transition text-xs font-semibold text-berlin-gray-800" onClick={e => { e.preventDefault(); setOpenFilterIndexes(prev => prev.includes(9902) ? prev.filter(i => i !== 9902) : [...prev, 9902]); }}>
+              <span>Packaging Function{filterState.packagingfunction && <span className="ml-1 text-berlin-red-600 text-xs font-semibold">(1)</span>}</span>
+              <svg className="w-3 h-3 ml-2 text-berlin-red-500 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
+            </summary>
+            {openFilterIndexes.includes(9902) && (
+              <div className="mt-1 space-y-1">
+                {(['primary','secondary','closure','accessory'] as const).map((fn) => (
+                  <button key={fn} type="button" className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium w-full text-left transition hover:bg-berlin-red-50 ${filterState.packagingfunction === fn ? 'bg-berlin-red-50 border border-berlin-red-300 text-berlin-red-700' : 'bg-berlin-gray-50 text-berlin-gray-700'}`}
+                    onClick={() => handleFilterChange('packagingfunction', filterState.packagingfunction === fn ? '' : fn)}>
+                    <span className="capitalize">{fn}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </details>
+        </div>
+
+        {/* ── Compliance filter ── */}
+        <hr className="my-3 border-berlin-gray-100" />
+        <div className="mb-1">
+          <details className="group" open={openFilterIndexes.includes(9903)}>
+            <summary className="flex items-center justify-between cursor-pointer select-none py-1 px-1 rounded hover:bg-berlin-red-50 transition text-xs font-semibold text-berlin-gray-800" onClick={e => { e.preventDefault(); setOpenFilterIndexes(prev => prev.includes(9903) ? prev.filter(i => i !== 9903) : [...prev, 9903]); }}>
+              <span>Compliance{(['fdaapproved','eucompliant','reach','rohs'] as const).some((k: string) => filterState[k]) && <span className="ml-1 text-berlin-red-600 text-xs font-semibold">✓</span>}</span>
+              <svg className="w-3 h-3 ml-2 text-berlin-red-500 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
+            </summary>
+            {openFilterIndexes.includes(9903) && (
+              <div className="mt-1 space-y-1">
+                {([['fdaapproved','FDA Approved'],['eucompliant','EU Compliant'],['reach','REACH'],['rohs','RoHS']] as const).map(([key, label]) => (
+                  <button key={key} type="button" className={`flex items-center gap-2 px-2 py-1 rounded-md text-xs font-medium w-full text-left transition hover:bg-berlin-red-50 ${filterState[key] ? 'bg-berlin-red-50 border border-berlin-red-300 text-berlin-red-700' : 'bg-berlin-gray-50 text-berlin-gray-700'}`}
+                    onClick={() => handleFilterChange(key, !filterState[key])}>
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </details>
+        </div>
+
         {/* Action buttons */}
         <div className="flex items-center gap-3 mt-6">
           <button className="text-berlin-red-600 hover:underline text-xs font-medium" onClick={() => {
@@ -961,6 +1072,9 @@ const ProductFilterPage = () => {
                         }}
                       />
                       <h2 className="text-lg font-semibold mb-1">{product.title}</h2>
+                      {product?.productHighlights && (
+                        <p className="text-xs text-berlin-gray-500 mb-2 line-clamp-2 leading-relaxed">{product.productHighlights}</p>
+                      )}
                       
                       {/* Material and Shape - only show if both have values */}
                       {(product.material || product.shape) && (
