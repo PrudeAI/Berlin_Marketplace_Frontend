@@ -1,10 +1,19 @@
 import React, { useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { SearchBar } from '../ui/SearchBar';
 import { Button } from '../ui/Button';
 import { ArrowRight } from 'lucide-react';
 
 export const HeroSection = () => {
   const heroRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+
+  // Run a product search: go to the all-products listing with the term as a URL param.
+  // An empty term navigates without a search param, restoring the normal list.
+  const handleSearch = (searchTerm: string) => {
+    const q = searchTerm.trim();
+    navigate(q ? `/products/filter/all?search=${encodeURIComponent(q)}` : '/products/filter/all');
+  };
 
   useEffect(() => {
     const handleScroll = () => {
@@ -41,9 +50,10 @@ export const HeroSection = () => {
           </p>
           
           <div className="mb-10">
-            <SearchBar 
-              placeholder="Search for sustainable packaging solutions..." 
+            <SearchBar
+              placeholder="Search for sustainable packaging solutions..."
               className="mx-auto"
+              onSearch={handleSearch}
             />
           </div>
           
