@@ -220,10 +220,10 @@ const ProductFilterPage = () => {
           ? `&search=${encodeURIComponent(searchQuery.trim())}`
           : '';
 
-        // Marketplace shows APPROVED products only — pending products are never requested,
-        // so they can never appear in the listing or in search results. The search term
-        // (when present) is applied server-side alongside the approved status.
-        const response = await fetch(`${API_URL}/api/products?limit=100&status=approved${searchParam}`);
+        // Browsing (no search term) shows APPROVED products only. When a search term is
+        // present, omit the status filter so the backend searches across ALL statuses.
+        const statusParam = searchQuery.trim() ? '' : '&status=approved';
+        const response = await fetch(`${API_URL}/api/products?limit=100${statusParam}${searchParam}`);
         const result = await response.json();
 
         const allProducts = result.products || [];
