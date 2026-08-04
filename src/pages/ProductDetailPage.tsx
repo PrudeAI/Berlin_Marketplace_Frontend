@@ -16,7 +16,8 @@ import {
   Share2,
   Info,
   Star,
-  MessageSquare
+  MessageSquare,
+  Loader2
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -194,6 +195,54 @@ export const ProductDetailPage = () => {
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteSuccess, setQuoteSuccess] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  const handleDownloadReport = async () => {
+    if (!id) return;
+
+    setReportLoading(true);
+    setReportError(null);
+
+    try {
+      const response = await fetch(`${API_URL}/api/products/${id}/report`);
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          setReportError('Unable to generate the report because this product could not be found.');
+        } else {
+          // 500 and any other non-OK status.
+          setReportError('Something went wrong while generating the product report. Please try again.');
+        }
+        return;
+      }
+
+      // Receive the PDF as a Blob, then trigger a browser download.
+      const blob = await response.blob();
+
+      // Prefer the server-provided filename; fall back to the product name.
+      let filename = `${product?.name ?? 'product'}-report.pdf`;
+      const disposition = response.headers.get('Content-Disposition');
+      if (disposition) {
+        const match = /filename="?([^"]+)"?/.exec(disposition);
+        if (match?.[1]) filename = match[1];
+      }
+
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      console.error('Error downloading product report:', err);
+      setReportError('Unable to reach the server.');
+    } finally {
+      setReportLoading(false);
+    }
+  };
 
   useEffect(() => {
     const fetchProduct = async () => {
@@ -434,8 +483,22 @@ export const ProductDetailPage = () => {
                 </div>
                 
                 <div className="flex gap-2 mt-3">
-                  <Button variant="outline" size="sm" className="flex-1">
-                    <Download className="h-4 w-4 mr-1" /> Spec Sheet
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={handleDownloadReport}
+                    disabled={reportLoading}
+                  >
+                    {reportLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-1 animate-spin" /> Generating Report...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4 mr-1" /> Spec Sheet
+                      </>
+                    )}
                   </Button>
                   <Button variant="ghost" size="sm">
                     <Share2 className="h-4 w-4 mr-1" /> Share
@@ -448,6 +511,9 @@ export const ProductDetailPage = () => {
                     />
                   </div>
                 </div>
+                {reportError && (
+                  <p className="text-sm text-red-600 mt-2">{reportError}</p>
+                )}
               </div>
 
               <div className="bg-berlin-gray-50 p-4 rounded-lg">
