@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import commonFilters from '../data/commonFilters.json';
 import categoryFilters from '../data/categorySpecificFilters.json';
 import CountryFlag from 'react-country-flag';
@@ -195,6 +195,8 @@ function productMatchesFilters(product: any, filters: Record<string, any>) {
 
 const ProductFilterPage = () => {
   const { filterValue } = useParams<{ filterValue: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const searchQuery = searchParams.get('search') || '';
   const [filterState, setFilterState] = useState<Record<string, any>>({});
   const [openFilterIndexes, setOpenFilterIndexes] = useState<number[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierData[]>([]);
@@ -204,46 +206,32 @@ const ProductFilterPage = () => {
   const productsPerPage = 12;
   const filtersToShow = getFiltersForCategory(filterValue || '');
 
-  // Fetch products from backend
+  // Fetch products from the backend. When a search term is present it is passed to the
+  // API (GET /api/products?search=...) so MongoDB performs the search server-side — the
+  // product text is never filtered in React. Re-runs whenever the search term changes.
   useEffect(() => {
     const fetchProducts = async () => {
       try {
         setLoading(true);
-        
-        // Fetch both approved and pending products
-        const [approvedResponse, pendingResponse] = await Promise.all([
-          fetch(`${API_URL}/api/products?limit=100&status=approved`),
-          fetch(`${API_URL}/api/products?limit=100&status=pending`)
-        ]);
-        
-        // console.log('API response statuses:', {
-        //   approved: approvedResponse.status,
-        //   pending: pendingResponse.status
-        // });
-        
-        const [approvedResult, pendingResult] = await Promise.all([
-          approvedResponse.json(),
-          pendingResponse.json()
-        ]);
-        
-        console.log('API results:', { approvedResult, pendingResult });
-        
-        const allProducts = [
-          ...(approvedResult.products || []),
-          ...(pendingResult.products || [])
-        ];
-        
-        console.log('All products combined:', allProducts);
-        
-        if (allProducts.length > 0) {
-          // Transform product data to match expected format
-          const transformedProducts = allProducts.map(transformProductToDisplayFormat);
-          console.log('Transformed products:', transformedProducts);
-          setSuppliers(transformedProducts);
-        } else {
-          setError('No products found');
-          console.error('No products returned from API');
-        }
+        setError(null);
+
+        // Forward the active search term so the search runs in MongoDB, not in the browser.
+        const searchParam = searchQuery.trim()
+          ? `&search=${encodeURIComponent(searchQuery.trim())}`
+          : '';
+
+        // Browsing (no search term) shows APPROVED products only. When a search term is
+        // present, omit the status filter so the backend searches across ALL statuses.
+        const statusParam = searchQuery.trim() ? '' : '&status=approved';
+        const response = await fetch(`${API_URL}/api/products?limit=100${statusParam}${searchParam}`);
+        const result = await response.json();
+
+        const allProducts = result.products || [];
+
+        // An empty result is valid (e.g. a search with no matches); let the grid render
+        // its empty state rather than surfacing an error.
+        const transformedProducts = allProducts.map(transformProductToDisplayFormat);
+        setSuppliers(transformedProducts);
       } catch (err) {
         setError('Failed to connect to server');
         console.error('Error fetching products:', err);
@@ -253,12 +241,18 @@ const ProductFilterPage = () => {
     };
 
     fetchProducts();
-  }, []);
+  }, [searchQuery]);
 
-  // Reset pagination when category changes
+  // Reset pagination when category or search query changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterValue]);
+  }, [filterValue, searchQuery]);
+
+  // Clear the active search query (removes the ?search= param)
+  const clearSearch = () => {
+    searchParams.delete('search');
+    setSearchParams(searchParams, { replace: true });
+  };
 
   // Transform product data from backend to display format
   const transformProductToDisplayFormat = (product: any): SupplierData => {
@@ -793,6 +787,22 @@ const ProductFilterPage = () => {
           </h1>
           {/* Selected Filters Chips */}
 <div className="flex flex-wrap gap-2 mb-6">
+  {/* Active search term chip */}
+  {searchQuery && (
+    <span
+      className="flex items-center bg-berlin-red-50 text-berlin-red-700 px-3 py-1 rounded-full text-sm font-medium border border-berlin-red-200"
+    >
+      Search: {searchQuery}
+      <button
+        className="ml-2 text-berlin-red-500 hover:text-berlin-red-700"
+        onClick={clearSearch}
+        aria-label="Clear search"
+        type="button"
+      >
+        &times;
+      </button>
+    </span>
+  )}
   {filtersToShow.flatMap((filter: any) => {
     // Normalize filter key for state lookup
     const key = filter.name.toLowerCase();
@@ -903,6 +913,8 @@ const ProductFilterPage = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                 {(() => {
                   const allProducts = getAllProducts();
+                  // Search already ran server-side (see fetch above). Here we only apply the
+                  // sidebar filters and the category taken from the URL.
                   const filteredProducts = filterValue === 'all'
                     ? allProducts.filter(product => productMatchesFilters(product, filterState))
                     : allProducts.filter(product =>

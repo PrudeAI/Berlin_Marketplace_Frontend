@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, FileText, File, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { Upload, FileText, File, CheckCircle, AlertCircle, Loader2, Link2 } from 'lucide-react';
 import ProductSummary from '../components/products/ProductSummary';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -54,6 +54,15 @@ const AIProductEntryPage: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<'upload' | 'processing' | 'review' | 'summary'>('upload');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+
+  // URL-extraction mode state (file upload above stays exactly as-is)
+  const [entryMode, setEntryMode] = useState<'file' | 'url'>('file');
+  const [productUrl, setProductUrl] = useState('');
+  const [urlLoading, setUrlLoading] = useState(false);
+  const [urlFeedback, setUrlFeedback] = useState<{ type: 'error' | 'info'; text: string } | null>(null);
+  // Synchronous guard so a double-click / Enter key / stale `urlLoading` cannot fire
+  // two concurrent extraction requests (which could let an older response overwrite a newer one).
+  const urlInFlightRef = useRef(false);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -130,8 +139,87 @@ const AIProductEntryPage: React.FC = () => {
     }
   };
 
+  const processUrl = async () => {
+    const trimmedUrl = productUrl.trim();
+
+    // Validate that the field is not empty before making the request.
+    if (!trimmedUrl) {
+      setUrlFeedback({ type: 'error', text: 'Please enter a product URL.' });
+      return;
+    }
+
+    // Block duplicate/concurrent submissions before any async work begins.
+    if (urlInFlightRef.current) return;
+    urlInFlightRef.current = true;
+
+    setUrlLoading(true);
+    setUrlFeedback(null);
+
+    try {
+      const response = await fetch(`${API_URL}/api/ai/extract-products-from-url`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // Same Bearer auth pattern used by the file upload above.
+          'Authorization': `Bearer ${localStorage.getItem('supplier_token')}`
+        },
+        body: JSON.stringify({ url: trimmedUrl })
+      });
+
+      // Read the body once; it may carry products (success) or a message (error).
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        if (response.status === 403) {
+          // Page is behind a login/authentication wall → show the backend's guidance,
+          // NOT "No products found for this URL".
+          setUrlFeedback({
+            type: 'error',
+            text: (data && (data.message || data.error)) || "This page appears to require authentication and can't be accessed automatically. Please use a publicly accessible URL or upload the product document instead."
+          });
+        } else if (response.status === 400) {
+          // Validation error → surface the backend-provided message.
+          setUrlFeedback({
+            type: 'error',
+            text: (data && (data.message || data.error)) || 'Invalid URL. Please check it and try again.'
+          });
+        } else {
+          // Server error (500) or anything else.
+          setUrlFeedback({
+            type: 'error',
+            text: 'Something went wrong while extracting products from this URL. Please try again later.'
+          });
+        }
+        return;
+      }
+
+      const products: ExtractedProduct[] = (data && data.products) || [];
+
+      if (products.length === 0) {
+        // No matches → stay on the upload step with a friendly message.
+        setUrlFeedback({ type: 'info', text: 'No products found for this URL.' });
+        return;
+      }
+
+      // Reuse the existing review pipeline: populate state and jump to review.
+      setExtractedProducts(prev => [...prev, ...products]);
+      // Clear the URL input so it is empty when the user returns to the upload screen.
+      setProductUrl('');
+      setCurrentStep('review');
+    } catch (error) {
+      console.error('Error extracting products from URL:', error);
+      setUrlFeedback({
+        type: 'error',
+        text: 'Unable to reach the server. Please check your connection and try again.'
+      });
+    } finally {
+      setUrlLoading(false);
+      urlInFlightRef.current = false;
+    }
+  };
+
   const handleProductEdit = (productId: string, updatedProduct: Partial<ExtractedProduct>) => {
-    setExtractedProducts(prev => prev.map(product => 
+    setExtractedProducts(prev => prev.map(product =>
       product.id === productId ? { ...product, ...updatedProduct } : product
     ));
   };
@@ -191,24 +279,104 @@ const AIProductEntryPage: React.FC = () => {
           </p>
         </div>
 
-        <div 
-          className="border-2 border-dashed border-gray-300 rounded-xl p-12 text-center hover:border-berlin-red-400 transition-colors cursor-pointer"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".xlsx,.xls,.pdf,.pptx,.ppt"
-            onChange={handleFileUpload}
-            className="hidden"
-          />
-          <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-lg font-medium mb-2">Drop files here or click to browse</p>
-          <p className="text-sm text-gray-500">
-            Supported formats: Excel (.xlsx, .xls), PDF (.pdf), PowerPoint (.pptx, .ppt)
-          </p>
+        {/* Input source toggle: keep file upload, add URL extraction */}
+        <div className="flex justify-center mb-6">
+          <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1">
+            <button
+              type="button"
+              onClick={() => { setEntryMode('file'); setUrlFeedback(null); }}
+              className={`px-5 py-2 rounded-md text-sm font-medium transition-colors ${
+                entryMode === 'file'
+                  ? 'bg-berlin-red-600 text-white shadow'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Upload File
+            </button>
+            <button
+              type="button"
+              onClick={() => { setEntryMode('url'); setUrlFeedback(null); }}
+              className={`px-5 py-2 rounded-md text-sm font-medium transition-colors ${
+                entryMode === 'url'
+                  ? 'bg-berlin-red-600 text-white shadow'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Paste Product URL
+            </button>
+          </div>
         </div>
+
+        {/* File upload mode — unchanged behavior */}
+        {entryMode === 'file' && (
+          <div
+            className="border-2 border-dashed border-gray-300 rounded-xl p-12 text-center hover:border-berlin-red-400 transition-colors cursor-pointer"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".xlsx,.xls,.pdf,.pptx,.ppt"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-lg font-medium mb-2">Drop files here or click to browse</p>
+            <p className="text-sm text-gray-500">
+              Supported formats: Excel (.xlsx, .xls), PDF (.pdf), PowerPoint (.pptx, .ppt)
+            </p>
+          </div>
+        )}
+
+        {/* URL extraction mode */}
+        {entryMode === 'url' && (
+          <form
+            onSubmit={(e) => { e.preventDefault(); processUrl(); }}
+            className="border-2 border-dashed border-gray-300 rounded-xl p-12 text-center"
+          >
+            <Link2 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-lg font-medium mb-2">Paste a product page URL</p>
+            <p className="text-sm text-gray-500 mb-6">
+              We'll fetch the page and let AI extract the product information.
+            </p>
+            <div className="flex flex-col sm:flex-row items-stretch gap-3 max-w-xl mx-auto">
+              <input
+                type="url"
+                value={productUrl}
+                onChange={(e) => setProductUrl(e.target.value)}
+                placeholder="https://example.com/product/123"
+                className="flex-1 border border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-berlin-red-500 focus:border-berlin-red-500"
+              />
+              <button
+                type="submit"
+                disabled={urlLoading}
+                className="px-6 py-3 bg-berlin-red-600 text-white rounded-lg font-semibold hover:bg-berlin-red-700 disabled:opacity-50 flex items-center justify-center"
+              >
+                {urlLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Extracting…
+                  </>
+                ) : (
+                  'Extract Products'
+                )}
+              </button>
+            </div>
+
+            {urlFeedback && (
+              <div
+                className={`mt-6 max-w-xl mx-auto rounded-lg border p-4 text-sm text-left ${
+                  urlFeedback.type === 'error'
+                    ? 'bg-red-50 border-red-200 text-red-700'
+                    : 'bg-yellow-50 border-yellow-200 text-yellow-800'
+                }`}
+              >
+                {urlFeedback.text}
+              </div>
+            )}
+          </form>
+        )}
 
         <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="text-center">
@@ -346,6 +514,9 @@ const AIProductEntryPage: React.FC = () => {
               setCurrentStep('upload');
               setUploadedFiles([]);
               setExtractedProducts([]);
+              setProductUrl('');
+              setUrlFeedback(null);
+              setEntryMode('file');
             }}
             className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50"
           >

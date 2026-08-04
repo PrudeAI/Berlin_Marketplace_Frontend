@@ -168,6 +168,13 @@ export const ProductsPage = () => {
 		setFilterState((prev) => ({ ...prev, [filterName]: value }));
 	};
 
+	// Run a product search: go to the all-products listing with the term as a URL param.
+	// An empty term navigates without a search param, restoring the normal list.
+	const handleSearch = (searchTerm: string) => {
+		const q = searchTerm.trim();
+		navigate(q ? `/products/filter/all?search=${encodeURIComponent(q)}` : '/products/filter/all');
+	};
+
 	const filteredProducts = mockProducts.filter(product => productMatchesFilters(product, filterState));
 
 	return (
@@ -178,7 +185,7 @@ export const ProductsPage = () => {
 						Sustainable Packaging Products
 					</h1>
 					<div className="max-w-3xl mx-auto">
-						<SearchBar placeholder="Search products by type, material, or supplier..." />
+						<SearchBar placeholder="Search products by type, material, or supplier..." onSearch={handleSearch} />
 					</div>
 					<div className="flex justify-center mt-6 space-x-4">
 						<Button
