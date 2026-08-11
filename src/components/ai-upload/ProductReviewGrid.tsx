@@ -77,9 +77,7 @@ function ProductCard({
   const isApproved = product.status === 'approved';
   const isRejected = product.status === 'rejected';
 
-  const thumbSrc = product.images[0]
-    || product.pageImageUrl
-    || null;
+  const thumbSrc = product.images[0] || null;
 
   return (
     <div className={`
