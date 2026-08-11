@@ -58,12 +58,6 @@ const ProcessingProgress: React.FC<ProcessingProgressProps> = ({ files, liveProd
               Gemini AI is extracting product information page-by-page
             </p>
           </div>
-          <button
-            onClick={onUploadMore}
-            className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            + Upload more
-          </button>
         </div>
 
         {/* File list */}
