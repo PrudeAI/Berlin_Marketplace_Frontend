@@ -1,10 +1,13 @@
 import React, { useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { SearchBar } from '../ui/SearchBar';
 import { Button } from '../ui/Button';
 import { ArrowRight } from 'lucide-react';
+import { productSearchPath } from '../../utils/search';
 
 export const HeroSection = () => {
   const heroRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -41,9 +44,13 @@ export const HeroSection = () => {
           </p>
           
           <div className="mb-10">
-            <SearchBar 
-              placeholder="Search for sustainable packaging solutions..." 
+            <SearchBar
+              placeholder="Search for sustainable packaging solutions..."
               className="mx-auto"
+              onSearch={(term) => {
+                const path = productSearchPath(term);
+                if (path) navigate(path);
+              }}
             />
           </div>
           

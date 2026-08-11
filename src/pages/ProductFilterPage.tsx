@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import commonFilters from '../data/commonFilters.json';
 import categoryFilters from '../data/categorySpecificFilters.json';
 import CountryFlag from 'react-country-flag';
+import { getSupplierDisplayName } from '../utils/supplierDisplay';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 // Types for supplier data from backend
 interface SupplierData {
@@ -235,7 +236,11 @@ function productMatchesFilters(product: any, filters: Record<string, any>) {
 }
 
 const ProductFilterPage = () => {
-  const { filterValue } = useParams<{ filterValue: string }>();
+  // filterType distinguishes /products/search/<term> from /products/<category>.
+  // It was previously destructured away and ignored entirely.
+  const { filterType, filterValue } = useParams<{ filterType?: string; filterValue: string }>();
+  const isSearch = filterType === 'search';
+  const searchTerm = isSearch ? decodeURIComponent(filterValue || '') : '';
   const [filterState, setFilterState] = useState<Record<string, any>>({});
   const [openFilterIndexes, setOpenFilterIndexes] = useState<number[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierData[]>([]);
@@ -250,11 +255,19 @@ const ProductFilterPage = () => {
     const fetchProducts = async () => {
       try {
         setLoading(true);
-        
+        setError(null);
+
+        // On a search route the backend does the matching (regex $or across
+        // name, description, highlights, tags, use cases, material and the
+        // supplier/brand name) — client-side category equality can't do that.
+        const search = isSearch && searchTerm
+          ? `&search=${encodeURIComponent(searchTerm)}`
+          : '';
+
         // Fetch both approved and pending products
         const [approvedResponse, pendingResponse] = await Promise.all([
-          fetch(`${API_URL}/api/products?limit=100&status=approved`),
-          fetch(`${API_URL}/api/products?limit=100&status=pending`)
+          fetch(`${API_URL}/api/products?limit=100&status=approved${search}`),
+          fetch(`${API_URL}/api/products?limit=100&status=pending${search}`)
         ]);
         
         // console.log('API response statuses:', {
@@ -276,15 +289,9 @@ const ProductFilterPage = () => {
         
         console.log('All products combined:', allProducts);
         
-        if (allProducts.length > 0) {
-          // Transform product data to match expected format
-          const transformedProducts = allProducts.map(transformProductToDisplayFormat);
-          console.log('Transformed products:', transformedProducts);
-          setSuppliers(transformedProducts);
-        } else {
-          setError('No products found');
-          console.error('No products returned from API');
-        }
+        // An empty result is a normal outcome (especially for a search), not an
+        // error — let the grid render its own "no results" state.
+        setSuppliers(allProducts.map(transformProductToDisplayFormat));
       } catch (err) {
         setError('Failed to connect to server');
         console.error('Error fetching products:', err);
@@ -294,9 +301,11 @@ const ProductFilterPage = () => {
     };
 
     fetchProducts();
-  }, []);
+    // Refetch when the search term changes — this dependency array used to be
+    // empty, so navigating between searches kept showing the first result set.
+  }, [isSearch, searchTerm]);
 
-  // Reset pagination when category changes
+  // Reset pagination when the category or search term changes
   useEffect(() => {
     setCurrentPage(1);
   }, [filterValue]);
@@ -385,9 +394,11 @@ const ProductFilterPage = () => {
       }
     }
     
-    if (product.supplier?.companyName && product.supplier.companyName.trim() !== '') {
+    // Prefer the per-product brand override; falls back to the listing account.
+    const supplierDisplayName = getSupplierDisplayName(product, '');
+    if (supplierDisplayName) {
       if (!mergedFilters.Supplier) {
-        mergedFilters.Supplier = [product.supplier.companyName];
+        mergedFilters.Supplier = [supplierDisplayName];
       }
     }
     
@@ -895,13 +906,26 @@ const ProductFilterPage = () => {
           <div className="flex items-center mb-4 text-sm text-berlin-gray-500 space-x-2">
             <Link to="/products" className="hover:text-berlin-red-600">All Products</Link>
             <span>&gt;</span>
-            <span className="text-berlin-red-700 font-semibold capitalize">
-              {filterValue?.replace(/-/g, ' ')}
+            <span className={`text-berlin-red-700 font-semibold ${isSearch ? '' : 'capitalize'}`}>
+              {isSearch ? `Search: ${searchTerm}` : filterValue?.replace(/-/g, ' ')}
             </span>
           </div>
-          <h1 className="text-3xl font-bold mb-6 capitalize">
-            {filterValue?.replace(/-/g, ' ')}
-          </h1>
+          {isSearch ? (
+            <div className="mb-6">
+              <h1 className="text-3xl font-bold">
+                Results for &ldquo;{searchTerm}&rdquo;
+              </h1>
+              {!loading && (
+                <p className="text-berlin-gray-600 mt-1">
+                  {getAllProducts().length} product{getAllProducts().length !== 1 ? 's' : ''} found
+                </p>
+              )}
+            </div>
+          ) : (
+            <h1 className="text-3xl font-bold mb-6 capitalize">
+              {filterValue?.replace(/-/g, ' ')}
+            </h1>
+          )}
           {/* Selected Filters Chips */}
 <div className="flex flex-wrap gap-2 mb-6">
   {filtersToShow.flatMap((filter: any) => {
@@ -1014,7 +1038,9 @@ const ProductFilterPage = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                 {(() => {
                   const allProducts = getAllProducts();
-                  const filteredProducts = filterValue === 'all'
+                  // On a search route the server already selected the matches,
+                  // so only the sidebar filters apply — never category equality.
+                  const filteredProducts = (isSearch || filterValue === 'all')
                     ? allProducts.filter(product => productMatchesFilters(product, filterState))
                     : allProducts.filter(product =>
                         product.category?.toLowerCase() === (filterValue || '').toLowerCase()
@@ -1033,11 +1059,15 @@ const ProductFilterPage = () => {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2M4 13h2m13-8l-4 4m0 0l-4-4m4 4V3"></path>
                           </svg>
                         </div>
-                        <h3 className="text-lg font-medium text-berlin-gray-900 mb-2">No suppliers found</h3>
+                        <h3 className="text-lg font-medium text-berlin-gray-900 mb-2">
+                          {isSearch ? 'No matching products' : 'No suppliers found'}
+                        </h3>
                         <p className="text-berlin-gray-600 mb-4">
-                          {suppliers.length === 0 
-                            ? "No suppliers have registered yet."
-                            : "No suppliers match your selected filters. Try adjusting your filters."
+                          {isSearch
+                            ? `Nothing matched “${searchTerm}”. Try a different term, a material like “PET”, or browse the categories.`
+                            : suppliers.length === 0
+                              ? "No suppliers have registered yet."
+                              : "No suppliers match your selected filters. Try adjusting your filters."
                           }
                         </p>
                         {filterState && Object.keys(filterState).length > 0 && (

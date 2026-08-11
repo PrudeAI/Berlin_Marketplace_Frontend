@@ -75,9 +75,18 @@ export interface AIExtractedProduct {
   pageNumber: number | null;
   pageImageUrl: string | null; // Cloudinary URL for the source page thumbnail
 
+  // Provenance — set when the product came from a scraped product URL
+  sourceUrl?: string | null;
+
+  // Why a product has no picture, so the supplier sees a reason rather than a blank
+  imageStatus?: 'ok' | 'missing' | 'failed';
+  imageWarning?: string | null;
+
   // Core product data (matches Product model)
   name: string;
   description: string;
+  /** Optional brand/manufacturer override; falls back to the listing account's name. */
+  supplierName?: string | null;
   broaderCategory: string;
   category: string;
   subcategory?: string | null;
@@ -120,20 +129,38 @@ export interface AIExtractedProduct {
 }
 
 // SSE event types
-export type SSEEventType = 'start' | 'product' | 'done' | 'error';
+export type SSEEventType =
+  | 'start' | 'product' | 'done' | 'error'
+  | 'warning' | 'url_start' | 'url_done' | 'url_error';
 
 export interface SSEStartEvent {
-  fileName: string;
+  fileName: string;   // also carries the URL label for the URL flow
   message: string;
+  totalUrls?: number;
 }
 
 export interface SSEDoneEvent {
   totalProducts: number;
   message: string;
+  creditsUsed?: number;
 }
 
 export interface SSEErrorEvent {
   message: string;
+}
+
+/** Non-fatal problem: no thumbnail could be made, an upload failed, etc. */
+export interface SSEWarningEvent {
+  message: string;
+}
+
+/** Per-URL progress within a single multi-URL run. */
+export interface SSEUrlEvent {
+  url: string;
+  index: number;
+  productsFound?: number;
+  creditsUsed?: number;
+  message?: string;   // present on url_error
 }
 
 // Completeness calculation result

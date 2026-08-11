@@ -208,6 +208,17 @@ const ProductEditModal: React.FC<ProductEditModalProps> = ({ product, onSave, on
               <Field label="Product Name" required>
                 <input className={inputCls} value={form.productInfo.name} onChange={e => setInfo('name', e.target.value)} placeholder="e.g. Airless Pump Bottle 50ml" />
               </Field>
+              <Field label="Supplier / Brand Name">
+                <input
+                  className={inputCls}
+                  value={form.productInfo.supplierName}
+                  onChange={e => setInfo('supplierName', e.target.value)}
+                  placeholder="e.g. WWP Beauty"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Optional. The brand this product belongs to — leave blank to show your own company name.
+                </p>
+              </Field>
               <Field label="Description" required>
                 <textarea className={textareaCls} rows={4} value={form.productInfo.description} onChange={e => setInfo('description', e.target.value)} placeholder="Describe the product…" />
               </Field>
@@ -377,6 +388,16 @@ const ProductEditModal: React.FC<ProductEditModalProps> = ({ product, onSave, on
 
           {/* ── Images ───────────────────────── */}
           <Section title="Product Images" open={openSections.images} onToggle={() => toggleSection('images')}>
+            {/* Explain WHY there's no image, instead of showing an empty section */}
+            {product.imageStatus && product.imageStatus !== 'ok' && form.uploadedImages.length === 0 && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                <p className="font-medium mb-0.5">No image was captured automatically</p>
+                <p className="text-xs text-amber-700">
+                  {product.imageWarning || 'This product has no photo yet.'} Upload one below — products without an
+                  image show a placeholder in the marketplace.
+                </p>
+              </div>
+            )}
             {/* Page image preview */}
             {product.pageImageUrl && form.uploadedImages.length === 0 && (
               <div className="mb-4 border-2 border-dashed border-berlin-red-200 rounded-xl p-4 bg-berlin-red-50">

@@ -1,4 +1,7 @@
-import type { AIExtractedProduct, SSEStartEvent, SSEDoneEvent, SSEErrorEvent } from '../utils/aiTypes';
+import type {
+  AIExtractedProduct, SSEStartEvent, SSEDoneEvent, SSEErrorEvent,
+  SSEWarningEvent, SSEUrlEvent,
+} from '../utils/aiTypes';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -7,34 +10,34 @@ export type ExtractionCallbacks = {
   onProduct?: (product: AIExtractedProduct) => void;
   onDone?: (data: SSEDoneEvent) => void;
   onError?: (data: SSEErrorEvent) => void;
+  /** Non-fatal: no thumbnail could be generated, an image upload failed, etc. */
+  onWarning?: (data: SSEWarningEvent) => void;
+  /** Per-URL progress, only emitted by the URL flow. */
+  onUrlStart?: (data: SSEUrlEvent) => void;
+  onUrlDone?: (data: SSEUrlEvent) => void;
+  onUrlError?: (data: SSEUrlEvent) => void;
 };
 
 /**
- * Upload a file to the v2 extraction endpoint and stream products via SSE.
- * Calls the appropriate callback for each SSE event type.
+ * Read an SSE response body and dispatch each frame to the matching callback.
+ *
+ * EventSource can't send an Authorization header, which is why this is built on
+ * fetch + ReadableStream rather than the browser's SSE client.
+ *
+ * Shared by the file and URL flows so their stream handling can't drift.
  */
-export async function extractProductsFromFile(
-  file: File,
-  callbacks: ExtractionCallbacks,
-  batchSize: number = 3
-): Promise<void> {
-  const token = localStorage.getItem('supplier_token');
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('batchSize', String(batchSize));
-
-  // Use fetch with ReadableStream to handle SSE
-  const response = await fetch(`${API_URL}/api/ai/v2/extract-products`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    body: formData,
-  });
-
+async function consumeSSE(response: Response, callbacks: ExtractionCallbacks): Promise<void> {
   if (!response.ok) {
-    const err = await response.text();
-    callbacks.onError?.({ message: `Server error ${response.status}: ${err}` });
+    // The server validates before opening the stream, so failures arrive as JSON.
+    let message = `Server error ${response.status}`;
+    try {
+      const body = await response.json();
+      if (body?.error) message = body.error;
+    } catch {
+      const text = await response.text().catch(() => '');
+      if (text) message = `${message}: ${text}`;
+    }
+    callbacks.onError?.({ message });
     return;
   }
 
@@ -43,7 +46,6 @@ export async function extractProductsFromFile(
     return;
   }
 
-  // Parse SSE stream
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -64,6 +66,7 @@ export async function extractProductsFromFile(
       let dataStr = '';
 
       for (const line of lines) {
+        if (line.startsWith(':')) continue; // heartbeat comment
         if (line.startsWith('event: ')) {
           eventType = line.slice(7).trim();
         } else if (line.startsWith('data: ')) {
@@ -76,24 +79,68 @@ export async function extractProductsFromFile(
       try {
         const data = JSON.parse(dataStr);
         switch (eventType) {
-          case 'start':
-            callbacks.onStart?.(data as SSEStartEvent);
-            break;
-          case 'product':
-            callbacks.onProduct?.(data as AIExtractedProduct);
-            break;
-          case 'done':
-            callbacks.onDone?.(data as SSEDoneEvent);
-            break;
-          case 'error':
-            callbacks.onError?.(data as SSEErrorEvent);
-            break;
+          case 'start':     callbacks.onStart?.(data as SSEStartEvent); break;
+          case 'product':   callbacks.onProduct?.(data as AIExtractedProduct); break;
+          case 'done':      callbacks.onDone?.(data as SSEDoneEvent); break;
+          case 'error':     callbacks.onError?.(data as SSEErrorEvent); break;
+          case 'warning':   callbacks.onWarning?.(data as SSEWarningEvent); break;
+          case 'url_start': callbacks.onUrlStart?.(data as SSEUrlEvent); break;
+          case 'url_done':  callbacks.onUrlDone?.(data as SSEUrlEvent); break;
+          case 'url_error': callbacks.onUrlError?.(data as SSEUrlEvent); break;
+          // Unknown event types are ignored on purpose — the server can add more.
         }
       } catch (parseErr) {
         console.warn('[aiExtractionService] Failed to parse SSE data:', dataStr);
       }
     }
   }
+}
+
+/**
+ * Upload a file to the v2 extraction endpoint and stream products via SSE.
+ */
+export async function extractProductsFromFile(
+  file: File,
+  callbacks: ExtractionCallbacks,
+  batchSize: number = 3
+): Promise<void> {
+  const token = localStorage.getItem('supplier_token');
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('batchSize', String(batchSize));
+
+  const response = await fetch(`${API_URL}/api/ai/v2/extract-products`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+
+  await consumeSSE(response, callbacks);
+}
+
+/**
+ * Scrape several product URLs and stream the extracted products via SSE.
+ *
+ * Unlike the file flow (one request per file, fan-out in the browser), this
+ * sends every URL in ONE request and the server runs a bounded worker pool —
+ * one connection, one place to throttle scraping credits, one `done` event.
+ */
+export async function extractProductsFromUrls(
+  urls: string[],
+  callbacks: ExtractionCallbacks
+): Promise<void> {
+  const token = localStorage.getItem('supplier_token');
+
+  const response = await fetch(`${API_URL}/api/ai/v2/extract-products-from-url`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ urls }),
+  });
+
+  await consumeSSE(response, callbacks);
 }
 
 /**

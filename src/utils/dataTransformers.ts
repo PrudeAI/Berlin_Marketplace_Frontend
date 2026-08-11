@@ -89,6 +89,7 @@ export function transformAIProductToFormData(product: AIExtractedProduct) {
     },
     productInfo: {
       name: product.name || '',
+      supplierName: product.supplierName || '',
       description: product.description || '',
       price: product.pricing?.basePrice ? String(product.pricing.basePrice) : '',
       minimumOrderQuantity: specs?.minimumOrderQuantity || 1,
@@ -149,6 +150,9 @@ export function transformFormDataToProduct(
   return {
     ...original,
     name: info.name,
+    // Must be re-listed explicitly: this function spreads `original` first, so
+    // any key not named here silently reverts to the pre-edit value on Save.
+    supplierName: info.supplierName?.trim() || null,
     description: info.description,
     broaderCategory: formData.selectedBroaderCategory,
     category: formData.selectedCategory,

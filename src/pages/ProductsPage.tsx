@@ -6,6 +6,7 @@ import { Button } from '../components/ui/Button';
 import { Sliders } from 'lucide-react';
 import commonFilters from '../data/commonFilters.json';
 import { useNavigate } from 'react-router-dom';
+import { productSearchPath } from '../utils/search';
 
 const mockProducts = [
 	{
@@ -178,7 +179,13 @@ export const ProductsPage = () => {
 						Sustainable Packaging Products
 					</h1>
 					<div className="max-w-3xl mx-auto">
-						<SearchBar placeholder="Search products by type, material, or supplier..." />
+						<SearchBar
+							placeholder="Search products by type, material, or supplier..."
+							onSearch={(term) => {
+								const path = productSearchPath(term);
+								if (path) navigate(path);
+							}}
+						/>
 					</div>
 					<div className="flex justify-center mt-6 space-x-4">
 						<Button

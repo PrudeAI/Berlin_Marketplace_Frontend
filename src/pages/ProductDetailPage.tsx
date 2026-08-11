@@ -5,13 +5,22 @@ import { SustainabilityScore } from '../components/ui/SustainabilityScore';
 import { FavoriteButton } from '../components/ui/FavoriteButton';
 import { isUserAuthenticated, getUserToken } from '../utils/userAuth';
 import { SimilarProducts } from '../components/recommendations/SimilarProducts';
-import { 
-  ChevronRight, 
+import { getSupplierDisplayName } from '../utils/supplierDisplay';
+import type { ProductData } from '../types/product';
+import {
+  getMaterials,
+  getLocation,
+  formatDimensions,
+  sortDynamicSpecs,
+  formatSpecValue,
+  getSupplierEmail,
+} from '../utils/productDisplay';
+import {
+  ChevronRight,
   ChevronLeft,
-  Leaf, 
-  Droplets, 
-  Recycle, 
-  ThumbsUp, 
+  Leaf,
+  Droplets,
+  ThumbsUp,
   Package, 
   Download,
   Share2,
@@ -22,173 +31,12 @@ import {
   ShieldCheck,
   Tag,
   Building2,
-  Sparkles
+  Sparkles,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-
-// Types based on the backend schema and expected structure
-interface ProductData {
-  _id: string;
-  name: string;
-  description: string;
-  images: string[];
-  primaryImage?: string;
-  broaderCategory: string;
-  category: string;
-  subcategory?: string;
-  specifications: {
-    material: string;
-    capacity?: {
-      value: number;
-      unit: string;
-    };
-    dimensions?: {
-      height?: number;
-      width?: number;
-      depth?: number;
-      diameter?: number;  // For cylindrical containers
-      unit?: string;
-    };
-    weight?: {
-      value: number;
-      unit: string;
-    };
-    color?: string;
-    finish?: string;
-    closure?: string;
-    minimumOrderQuantity: number;
-    availableQuantity?: number;
-    
-    // Dynamic specifications
-    dynamicSpecs?: Array<{
-      name: string;
-      value: string | number;
-      unit?: string;
-      category: 'physical' | 'material' | 'technical' | 'custom';
-      displayOrder: number;
-      isRequired: boolean;
-    }>;
-  };
-  pricing: {
-    basePrice: number;
-    currency: string;
-    priceBreaks?: Array<{
-      minQuantity: number;
-      price: number;
-    }>;
-  };
-  ecoScore: number;
-  sustainability: {
-    recycledContent?: number;
-    biodegradable?: boolean;
-    compostable?: boolean;
-    refillable?: boolean;
-    sustainableSourcing?: boolean;
-    carbonNeutral?: boolean;
-  };
-  certifications: Array<{
-    name: string;
-    certificationBody?: string;
-    validUntil?: string;
-    certificateNumber?: string;
-  }>;
-  customization?: {
-    printingAvailable?: boolean;
-    labelingAvailable?: boolean;
-    colorOptions?: string[];
-    printingMethods?: string[];
-    customSizes?: boolean;
-  };
-  leadTime?: {
-    standard?: number;
-    custom?: number;
-    rush?: number;
-  };
-  features?: string[];
-  // Filter fields for multiple materials and locations
-  categoryFilters?: { [key: string]: any };
-  commonFilters?: { [key: string]: any };
-  supplier: {
-    _id: string;
-    companyName: string;
-    companyDescription?: string;
-    companyLogo?: string;
-    address: {
-      country: string;
-      city?: string;
-      state?: string;
-    };
-    contactInfo?: {
-      email: string;
-      phone?: string;
-    };
-    certifications?: string[];
-    averageRating?: number;
-    totalReviews?: number;
-  };
-  averageRating: number;
-  totalReviews: number;
-  createdAt: string;
-  status: string;
-}
-
-// Helper function to extract materials from filters
-const getMaterials = (product: ProductData): string[] => {
-  const materials: string[] = [];
-  
-  // Add materials from common filters  
-  if (product.commonFilters?.Material) {
-    const commonMaterials = Array.isArray(product.commonFilters.Material)
-      ? product.commonFilters.Material
-      : [product.commonFilters.Material];
-    materials.push(...commonMaterials);
-  }
-  
-  // Add materials from category filters
-  if (product.categoryFilters?.Material) {
-    const categoryMaterials = Array.isArray(product.categoryFilters.Material)
-      ? product.categoryFilters.Material
-      : [product.categoryFilters.Material];
-    materials.push(...categoryMaterials);
-  }
-  
-  // Fallback to specifications material
-  if (materials.length === 0 && product.specifications.material) {
-    materials.push(product.specifications.material);
-  }
-  
-  // Remove duplicates and filter out empty values
-  return [...new Set(materials)].filter(material => material && material.trim() !== '');
-};
-
-// Helper function to get location from filters
-const getLocation = (product: ProductData): string => {
-  
-  // Try to get from common filters
-  if (product.commonFilters?.Location) {
-    const locations = Array.isArray(product.commonFilters.Location)
-      ? product.commonFilters.Location
-      : [product.commonFilters.Location];
-    return locations[0] || 'Location not specified';
-  }
-  
-  // Try to get from category filters
-  if (product.categoryFilters?.Location) {
-    const locations = Array.isArray(product.categoryFilters.Location)
-      ? product.categoryFilters.Location
-      : [product.categoryFilters.Location];
-    return locations[0] || 'Location not specified';
-  }
-  
-  // Fallback to supplier address
-  if (product.supplier.address?.country) {
-    return product.supplier.address.country;
-  }
-  
-  return 'Location not specified';
-};
-
 
 export const ProductDetailPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -201,6 +49,7 @@ export const ProductDetailPage = () => {
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteSuccess, setQuoteSuccess] = useState(false);
+  const [pdfState, setPdfState] = useState<'idle' | 'working' | 'error'>('idle');
 
   useEffect(() => {
     const fetchProduct = async () => {
@@ -274,6 +123,22 @@ export const ProductDetailPage = () => {
       alert('Failed to send quote request. Please try again.');
     } finally {
       setQuoteLoading(false);
+    }
+  };
+
+  const handleDownloadSpecSheet = async () => {
+    if (!product || pdfState === 'working') return; // re-entrancy guard
+    setPdfState('working');
+    try {
+      // Dynamic import keeps jsPDF (~145 kB gzip) out of the main bundle.
+      const { downloadSpecSheet } = await import('../utils/specSheet');
+      await downloadSpecSheet(product, { pageUrl: window.location.href });
+      setPdfState('idle');
+    } catch (err) {
+      console.error('Spec sheet generation failed:', err);
+      setPdfState('error');
+      // Not in a `finally` — that would clear the error state immediately.
+      window.setTimeout(() => setPdfState('idle'), 5000);
     }
   };
 
@@ -382,7 +247,7 @@ export const ProductDetailPage = () => {
                     {product.name}
                   </h1>
                   <p className="text-lg text-berlin-gray-600 mb-3">
-                    By <a href="#" className="text-berlin-red-600 hover:underline">{product.supplier.companyName}</a>
+                    By <a href="#" className="text-berlin-red-600 hover:underline">{getSupplierDisplayName(product)}</a>
                   </p>
                 </div>
                 <SustainabilityScore score={product.ecoScore} size="lg" />
@@ -462,8 +327,18 @@ export const ProductDetailPage = () => {
                 </div>
                 
                 <div className="flex gap-2 mt-3">
-                  <Button variant="outline" size="sm" className="flex-1">
-                    <Download className="h-4 w-4 mr-1" /> Spec Sheet
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={handleDownloadSpecSheet}
+                    disabled={pdfState === 'working'}
+                  >
+                    {pdfState === 'working' ? (
+                      <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Preparing…</>
+                    ) : (
+                      <><Download className="h-4 w-4 mr-1" /> Spec Sheet</>
+                    )}
                   </Button>
                   <Button variant="ghost" size="sm">
                     <Share2 className="h-4 w-4 mr-1" /> Share
@@ -600,7 +475,7 @@ export const ProductDetailPage = () => {
                       </div>
                       <div>
                         <p className="text-sm text-berlin-gray-600">Contact</p>
-                        <p className="font-medium">{product.supplier.contactInfo?.email || 'Contact via platform'}</p>
+                        <p className="font-medium">{getSupplierEmail(product.supplier) || 'Contact via platform'}</p>
                       </div>
                       <div>
                         <p className="text-sm text-berlin-gray-600">Rating</p>
@@ -617,9 +492,9 @@ export const ProductDetailPage = () => {
                       <div className="mt-4">
                         <p className="text-sm text-berlin-gray-600">Certifications</p>
                         <div className="flex flex-wrap gap-2 mt-1">
-                          {product.supplier.certifications.map((cert: string, index: number) => (
+                          {product.supplier.certifications.map((cert, index) => (
                             <span key={index} className="bg-berlin-red-50 text-berlin-red-700 px-2 py-1 text-xs rounded-full">
-                              {cert}
+                              {cert.name}
                             </span>
                           ))}
                         </div>
@@ -641,23 +516,7 @@ export const ProductDetailPage = () => {
                           <tr>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-berlin-gray-900 bg-berlin-gray-50 w-1/3">Dimensions</td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-berlin-gray-700">
-                              {(() => {
-                                const d = product.specifications.dimensions;
-                                const unit = d?.unit || 'mm';
-                                // Height x Width x Depth (rectangular)
-                                if (d?.height && d?.width && d?.depth) {
-                                  return `${d.height}x${d.width}x${d.depth} ${unit}`;
-                                }
-                                // Height x Diameter (cylindrical - bottles, jars, tubes)
-                                if (d?.height && d?.diameter) {
-                                  return `H: ${d.height} ${unit} × Ø: ${d.diameter} ${unit}`;
-                                }
-                                // Only height
-                                if (d?.height) {
-                                  return `Height: ${d.height} ${unit}`;
-                                }
-                                return 'Contact supplier for dimensions';
-                              })()}
+                              {formatDimensions(product.specifications.dimensions) || 'Contact supplier for dimensions'}
                             </td>
                           </tr>
                         )}
@@ -699,13 +558,7 @@ export const ProductDetailPage = () => {
                         )}
                         
                         {/* Dynamic Specifications - Sorted by category and display order */}
-                        {product.specifications.dynamicSpecs && product.specifications.dynamicSpecs
-                          .sort((a, b) => {
-                            // Sort by category first, then by display order
-                            const categoryOrder = { 'physical': 1, 'material': 2, 'technical': 3, 'custom': 4 };
-                            const categoryDiff = categoryOrder[a.category] - categoryOrder[b.category];
-                            return categoryDiff !== 0 ? categoryDiff : a.displayOrder - b.displayOrder;
-                          })
+                        {sortDynamicSpecs(product.specifications.dynamicSpecs)
                           .map((spec, index) => (
                             <tr key={index}>
                               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-berlin-gray-900 bg-berlin-gray-50">
@@ -725,7 +578,7 @@ export const ProductDetailPage = () => {
                                 </div>
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-berlin-gray-700">
-                                {spec.value}{spec.unit && ` ${spec.unit}`}
+                                {formatSpecValue(spec.value, spec.unit)}
                               </td>
                             </tr>
                           ))
@@ -894,6 +747,17 @@ export const ProductDetailPage = () => {
             <p className="font-medium">Quote request sent successfully!</p>
           </div>
           <p className="text-sm mt-1">Our sales team will contact you soon.</p>
+        </div>
+      )}
+
+      {/* Spec sheet failure */}
+      {pdfState === 'error' && (
+        <div className="fixed top-4 right-4 bg-berlin-red-100 border border-berlin-red-400 text-berlin-red-700 px-4 py-3 rounded-lg shadow-lg z-50">
+          <div className="flex items-center">
+            <AlertCircle className="h-5 w-5 mr-2" />
+            <p className="font-medium">Couldn't generate the spec sheet</p>
+          </div>
+          <p className="text-sm mt-1">Please try again, or contact us for a copy.</p>
         </div>
       )}
 

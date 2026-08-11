@@ -35,6 +35,7 @@ const AddProductPage: React.FC = () => {
   
   const [productInfo, setProductInfo] = useState({
     name: '',
+    supplierName: '',
     description: '',
     price: '',
     minimumOrderQuantity: 1,
@@ -275,6 +276,7 @@ const AddProductPage: React.FC = () => {
       
       const productData = {
         name: productInfo.name,
+        supplierName: productInfo.supplierName.trim() || undefined,
         description: productInfo.description,
         broaderCategory: selectedBroaderCategory,
         category: selectedCategory,
@@ -1243,6 +1245,22 @@ const AddProductPage: React.FC = () => {
                       className="w-full px-4 py-3 border border-berlin-gray-300 rounded-lg focus:ring-2 focus:ring-berlin-red-500 focus:border-transparent"
                       required
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-berlin-gray-700 mb-2">
+                      Supplier / Brand Name
+                    </label>
+                    <input
+                      type="text"
+                      value={productInfo.supplierName}
+                      onChange={(e) => setProductInfo(prev => ({ ...prev, supplierName: e.target.value }))}
+                      placeholder="e.g. WWP Beauty"
+                      className="w-full px-4 py-3 border border-berlin-gray-300 rounded-lg focus:ring-2 focus:ring-berlin-red-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-berlin-gray-500 mt-1">
+                      Optional — the brand this product belongs to. Leave blank to show your own company name.
+                    </p>
                   </div>
 
                   <div>

@@ -10,6 +10,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 interface Product {
   _id: string;
   name: string;
+  supplierName?: string | null;
   description: string;
   broaderCategory: string;
   category: string;
@@ -110,6 +111,7 @@ const EditProductPage: React.FC = () => {
   
   const [productInfo, setProductInfo] = useState({
     name: '',
+    supplierName: '',
     description: '',
     price: '',
     minimumOrderQuantity: 1,
@@ -225,6 +227,9 @@ const EditProductPage: React.FC = () => {
 
         setProductInfo({
           name: product.name || '',
+          // Must be hydrated: without this the input renders empty and the
+          // update payload would overwrite a stored value with ''.
+          supplierName: product.supplierName || '',
           description: product.description || '',
           price: product.pricing?.basePrice?.toString() || '',
           minimumOrderQuantity: product.specifications?.minimumOrderQuantity || 1,
@@ -603,6 +608,7 @@ const EditProductPage: React.FC = () => {
       
       const productData = {
         name: productInfo.name,
+        supplierName: productInfo.supplierName.trim() || null,
         description: productInfo.description,
         broaderCategory: selectedBroaderCategory,
         category: selectedCategory,
@@ -864,6 +870,20 @@ const EditProductPage: React.FC = () => {
                     placeholder="Enter product name"
                     required
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-berlin-gray-700 mb-2">Supplier / Brand Name</label>
+                  <input
+                    type="text"
+                    value={productInfo.supplierName}
+                    onChange={(e) => setProductInfo(prev => ({ ...prev, supplierName: e.target.value }))}
+                    className="w-full px-4 py-3 border border-berlin-gray-300 rounded-lg focus:ring-2 focus:ring-berlin-red-500 focus:border-transparent"
+                    placeholder="e.g. WWP Beauty"
+                  />
+                  <p className="text-xs text-berlin-gray-500 mt-1">
+                    Optional — the brand this product belongs to. Leave blank to show your own company name.
+                  </p>
                 </div>
 
                 <div>

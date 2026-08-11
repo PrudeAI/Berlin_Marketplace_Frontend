@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   CheckCircle, XCircle, Edit2, AlertTriangle, FileText,
   Leaf, Package, ChevronRight, Layers, Clock, Eye,
-  Sparkles
+  Sparkles, ImageOff, ImagePlus, Link2
 } from 'lucide-react';
 import type { AIExtractedProduct } from '../../utils/aiTypes';
 import { calculateCompleteness, getProductDisplaySummary } from '../../utils/dataTransformers';
@@ -16,7 +16,10 @@ interface ProductReviewGridProps {
   isSubmitting?: boolean;
 }
 
-type FilterTab = 'all' | 'pending' | 'approved' | 'rejected';
+type FilterTab = 'all' | 'pending' | 'approved' | 'rejected' | 'needsImage';
+
+/** A product with nothing to show on the marketplace grid. */
+const hasNoImage = (p: AIExtractedProduct) => (p.images?.length ?? 0) === 0 && !p.pageImageUrl;
 
 // ─── Completeness ring ────────────────────────────────────────────────────────
 function CompletenessRing({ percent, color, size = 'sm' }: { percent: number; color: 'green' | 'yellow' | 'red'; size?: 'sm' | 'md' }) {
@@ -99,11 +102,25 @@ function ProductCard({
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" 
           />
         ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-3">
+          /* Actionable, not passive: a product with no image renders as a
+             placeholder on the public grid, so offer the fix right here. */
+          <div className="w-full h-full flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-amber-50 to-orange-50/60 p-4">
             <div className="w-16 h-16 rounded-2xl bg-white/80 flex items-center justify-center shadow-sm">
-              <Package className="w-8 h-8 text-gray-300" />
+              <ImageOff className="w-8 h-8 text-amber-400" />
             </div>
-            <span className="text-xs text-gray-400 font-medium">No preview</span>
+            <span className="text-xs text-amber-700 font-semibold">No image</span>
+            {product.imageWarning && (
+              <span className="text-[10px] text-amber-600/80 text-center leading-tight line-clamp-2 px-2">
+                {product.imageWarning}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={onEdit}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-white text-amber-700 hover:bg-amber-50 shadow-sm border border-amber-200 transition-colors"
+            >
+              <ImagePlus className="w-3.5 h-3.5" /> Add image
+            </button>
           </div>
         )}
 
@@ -122,13 +139,27 @@ function ProductCard({
           </div>
         )}
 
-        {/* Page badge */}
-        {product.pageNumber && (
+        {/* Source badge — the origin URL matters more than "page 1" for scraped products */}
+        {product.sourceUrl ? (
+          <a
+            href={product.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            title={product.sourceUrl}
+            className="absolute top-3 right-3 max-w-[55%] bg-white/95 text-gray-700 text-xs px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1.5 font-medium hover:text-berlin-red-600"
+          >
+            <Link2 className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+            <span className="truncate">
+              {(() => { try { return new URL(product.sourceUrl).hostname.replace(/^www\./, ''); } catch { return 'source'; } })()}
+            </span>
+          </a>
+        ) : product.pageNumber ? (
           <div className="absolute top-3 right-3 bg-white/95 text-gray-700 text-xs px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1.5 font-medium">
             <FileText className="w-3.5 h-3.5 text-gray-400" />
             Page {product.pageNumber}
           </div>
-        )}
+        ) : null}
 
         {/* Index badge */}
         <div className="absolute bottom-3 left-3 w-8 h-8 bg-white/95 rounded-xl text-sm font-bold text-gray-700 flex items-center justify-center shadow-sm backdrop-blur-sm">
@@ -249,24 +280,41 @@ const ProductReviewGrid: React.FC<ProductReviewGridProps> = ({
   };
 
   const counts = {
-    all:      products.length,
-    pending:  products.filter(p => p.status === 'extracted' || p.status === 'reviewing').length,
-    approved: products.filter(p => p.status === 'approved').length,
-    rejected: products.filter(p => p.status === 'rejected').length,
+    all:        products.length,
+    pending:    products.filter(p => p.status === 'extracted' || p.status === 'reviewing').length,
+    approved:   products.filter(p => p.status === 'approved').length,
+    rejected:   products.filter(p => p.status === 'rejected').length,
+    needsImage: products.filter(hasNoImage).length,
   };
 
   const visibleProducts = activeTab === 'all'      ? products
-    : activeTab === 'approved' ? products.filter(p => p.status === 'approved')
-    : activeTab === 'rejected' ? products.filter(p => p.status === 'rejected')
+    : activeTab === 'approved'   ? products.filter(p => p.status === 'approved')
+    : activeTab === 'rejected'   ? products.filter(p => p.status === 'rejected')
+    : activeTab === 'needsImage' ? products.filter(hasNoImage)
     : products.filter(p => p.status === 'extracted' || p.status === 'reviewing');
 
   const editingProduct = editingId ? products.find(p => p.id === editingId) : null;
 
+  // Soft-warn rather than block: an Excel price list legitimately has no images.
+  const approvedWithoutImage = products.filter(p => p.status === 'approved' && hasNoImage(p)).length;
+  const handleSubmitClick = () => {
+    if (approvedWithoutImage > 0) {
+      const ok = window.confirm(
+        `${approvedWithoutImage} of the products you're publishing have no image and will show a placeholder in the marketplace.\n\nPublish anyway?`
+      );
+      if (!ok) return;
+    }
+    onSubmit();
+  };
+
   const TABS: { key: FilterTab; label: string; icon: React.ReactNode; color: string }[] = [
-    { key: 'all',      label: 'All Products',  icon: <Package className="w-4 h-4" />, color: '' },
-    { key: 'pending',  label: 'Pending',       icon: <Clock className="w-4 h-4" />, color: 'text-amber-600' },
-    { key: 'approved', label: 'Approved',      icon: <CheckCircle className="w-4 h-4" />, color: 'text-emerald-600' },
-    { key: 'rejected', label: 'Rejected',      icon: <XCircle className="w-4 h-4" />, color: 'text-gray-500' },
+    { key: 'all',        label: 'All Products', icon: <Package className="w-4 h-4" />, color: '' },
+    { key: 'pending',    label: 'Pending',      icon: <Clock className="w-4 h-4" />, color: 'text-amber-600' },
+    { key: 'approved',   label: 'Approved',     icon: <CheckCircle className="w-4 h-4" />, color: 'text-emerald-600' },
+    { key: 'rejected',   label: 'Rejected',     icon: <XCircle className="w-4 h-4" />, color: 'text-gray-500' },
+    ...(counts.needsImage > 0
+      ? [{ key: 'needsImage' as FilterTab, label: 'Needs image', icon: <ImageOff className="w-4 h-4" />, color: 'text-amber-600' }]
+      : []),
   ];
 
   return (
@@ -300,7 +348,7 @@ const ProductReviewGrid: React.FC<ProductReviewGridProps> = ({
               </button>
               <button
                 type="button"
-                onClick={onSubmit}
+                onClick={handleSubmitClick}
                 disabled={counts.approved === 0 || isSubmitting}
                 className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-berlin-red-600 to-berlin-red-500 text-white rounded-xl hover:from-berlin-red-700 hover:to-berlin-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-semibold shadow-lg shadow-berlin-red-500/25 transition-all"
               >

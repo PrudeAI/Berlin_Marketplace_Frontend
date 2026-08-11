@@ -158,7 +158,7 @@ const FileUploadZone: React.FC<FileUploadZoneProps> = ({ onFilesSelected, disabl
       <div className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-6">
         {[
           { icon: '📄', title: 'Page-by-page analysis', desc: 'PDFs and presentations are processed slide-by-slide so each product gets precise attention.' },
-          { icon: '🤖', title: 'Gemini AI extraction', desc: 'Google\'s Gemini 2.5 Flash reads your document and extracts all product fields automatically.' },
+          { icon: '🤖', title: 'Gemini AI extraction', desc: 'Google\'s Gemini reads your document and extracts all product fields automatically.' },
           { icon: '✏️', title: 'Review & correct', desc: 'Every extracted product lands on a review card where you can edit, approve, or reject before publishing.' },
         ].map(item => (
           <div key={item.title} className="bg-white rounded-xl border border-gray-200 p-5 text-center shadow-sm">

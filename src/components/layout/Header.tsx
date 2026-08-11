@@ -79,7 +79,7 @@ export const Header = () => {
   const navItems = [
     { name: 'Home', path: '/' },
     { name: 'Products', path: '/products' },
-    { name: 'AI Finder', path: '/find-products' },
+    // { name: 'AI Finder', path: '/find-products' },
     { name: 'Suppliers', path: '/become-supplier' },
     { name: 'Ask B', path: '/sustainability' },
     { name: 'About Us', path: '/about' },
